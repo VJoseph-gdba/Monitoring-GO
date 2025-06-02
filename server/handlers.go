@@ -263,22 +263,160 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAPIDashboardData provides a JSON API for dashboard data.
-// TODO: Implement actual data fetching and filtering logic.
 func (s *Server) HandleAPIDashboardData(w http.ResponseWriter, r *http.Request) {
-	log.Printf("HandleAPIDashboardData called for path: %s", r.URL.Path)
+	log.Printf("API call to HandleAPIDashboardData for path: %s", r.URL.Path)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second) // 1. Set timeout
+	defer cancel()
+	r = r.WithContext(ctx)
 
-	// Example: Return a simple JSON response
-	// In a real application, you would fetch data similar to HandleDashboard,
-	// but format it as JSON.
-	data := map[string]interface{}{
-		"message": "API endpoint for dashboard data is under construction.",
-		"data":    nil, // Placeholder for actual data
+	clients, err := s.getClientStatuses() // 2. Fetch client statuses
+	if err != nil {
+		log.Printf("HandleAPIDashboardData: Error getting client statuses: %v", err)
+		http.Error(w, "Error retrieving client data", http.StatusInternalServerError)
+		return
 	}
 
+	// 3. Calculate onlineCount, totalLatency, validLatencyCount, averageLatency
+	onlineCount := 0
+	totalLatency := 0.0
+	validLatencyCount := 0
+	for _, client := range clients {
+		if client.IsOnline {
+			onlineCount++
+		}
+		if client.LastLatency > 0 { // Consider only valid latencies
+			totalLatency += client.LastLatency
+			validLatencyCount++
+		}
+	}
+
+	averageLatency := 0.0
+	if validLatencyCount > 0 {
+		averageLatency = totalLatency / float64(validLatencyCount)
+	}
+
+	// 4. Parse query parameters
+	query := r.URL.Query()
+	selectedClientID := query.Get("client")
+	durationStr := query.Get("duration")
+	if durationStr == "" {
+		durationStr = "1h" // Default duration
+	}
+	duration, errParseDuration := time.ParseDuration(durationStr)
+	if errParseDuration != nil {
+		log.Printf("HandleAPIDashboardData: Error parsing duration '%s': %v. Defaulting to 1h", durationStr, errParseDuration)
+		duration = 1 * time.Hour
+	}
+
+	sortBy := query.Get("sort_by")
+	if sortBy == "" {
+		sortBy = "timestamp" // Default sort_by
+	}
+	sortOrder := query.Get("sort_order")
+	if sortOrder == "" {
+		sortOrder = "desc" // Default sort_order
+	}
+	limitStr := query.Get("limit")
+	limit := 50 // Default limit
+	if limitStr != "" {
+		if l, parseErr := strconv.Atoi(limitStr); parseErr == nil && l > 0 {
+			limit = l
+		}
+	}
+	statusFilter := query.Get("status_filter")
+	if statusFilter == "" {
+		statusFilter = "all" // Default status_filter
+	}
+	minLatencyStr := query.Get("min_latency")
+	minLatency := 0.0
+	if minLatencyStr != "" {
+		if ml, parseErr := strconv.ParseFloat(minLatencyStr, 64); parseErr == nil && ml >= 0 {
+			minLatency = ml
+		}
+	}
+	maxLatencyStr := query.Get("max_latency")
+	maxLatency := 0.0 // 0 means no max latency filter by default
+	if maxLatencyStr != "" {
+		if ml, parseErr := strconv.ParseFloat(maxLatencyStr, 64); parseErr == nil && ml > 0 {
+			maxLatency = ml
+		}
+	}
+
+	// 5. Initialize APIDashboardData
+	apiData := APIDashboardData{
+		OnlineCount:    onlineCount,
+		OfflineCount:   len(clients) - onlineCount,
+		TotalCount:     len(clients),
+		AverageLatency: averageLatency,
+		Clients:        clients, // Assign all clients initially
+	}
+
+	// 6. If selectedClientID is present
+	if selectedClientID != "" {
+		var selectedClientStatus *ClientStatus
+		for i := range clients {
+			if clients[i].ID == selectedClientID {
+				selectedClientStatus = &clients[i] // Assign pointer to the client in the slice
+				break
+			}
+		}
+
+		if selectedClientStatus != nil {
+			apiData.SelectedClient = selectedClientStatus // 6.b. Assign selected client
+
+			// 6.c. Create HistoryFilterOptions
+			filterOptions := HistoryFilterOptions{
+				ClientID:     selectedClientID,
+				Duration:     duration,
+				SortBy:       sortBy,
+				SortOrder:    sortOrder,
+				Limit:        limit,
+				StatusFilter: statusFilter,
+				MinLatency:   minLatency,
+				MaxLatency:   maxLatency,
+			}
+
+			// 6.d. Get client history
+			clientHistory, errHistory := s.getFilteredClientHistory(filterOptions)
+			if errHistory != nil {
+				log.Printf("HandleAPIDashboardData: Error getting filtered client history for client %s: %v", selectedClientID, errHistory)
+				// Not returning http error, clientHistory will be empty or nil in JSON
+			}
+			apiData.ClientHistory = clientHistory
+
+			// 6.e. Get client anomalies
+			// Using a default anomaly threshold (e.g., 1000ms) and limit (e.g., 100) for now
+			// These could also be made configurable via query parameters if needed.
+			anomalyThresholdMs := 1000.0
+			anomalyLimit := 100
+			clientAnomalies, errAnomalies := s.getAnomalies(selectedClientID, anomalyThresholdMs, duration, anomalyLimit)
+			if errAnomalies != nil {
+				log.Printf("HandleAPIDashboardData: Error getting anomalies for client %s: %v", selectedClientID, errAnomalies)
+				// Not returning http error, clientAnomalies will be empty or nil in JSON
+			}
+			apiData.ClientAnomalies = clientAnomalies
+		} else {
+			log.Printf("HandleAPIDashboardData: Selected client ID %s not found.", selectedClientID)
+			// Optionally, could return a 404 here if client ID is mandatory for this part of data
+		}
+	}
+
+	// 7. Set Content-Type header
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Error encoding JSON response for HandleAPIDashboardData: %v", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+
+	// 8. Marshal APIDashboardData to JSON
+	jsonData, err := json.Marshal(apiData)
+	if err != nil {
+		log.Printf("HandleAPIDashboardData: Error marshalling JSON response: %v", err)
+		http.Error(w, "Failed to prepare response", http.StatusInternalServerError)
+		return
+	}
+
+	// 9. Write JSON response
+	_, writeErr := w.Write(jsonData)
+	if writeErr != nil {
+		log.Printf("HandleAPIDashboardData: Error writing JSON response: %v", writeErr)
+		// It's often too late to send an HTTP error if headers have been written
 	}
 }
 
