@@ -125,7 +125,7 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	if selectedDurationStr == "" {
 		selectedDurationStr = "1h"
 	}
-	
+
 	duration, errParseDuration := time.ParseDuration(selectedDurationStr)
 	if errParseDuration != nil {
 		log.Printf("Erreur de parsing de la durée '%s': %v, utilisation par défaut 1h", selectedDurationStr, errParseDuration)
@@ -190,9 +190,17 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 				MinLatency:   minLatency,
 				MaxLatency:   maxLatency,
 			}
-			
-			clientHistory, _ = s.getFilteredClientHistory(filterOptions)
-			clientAnomalies, _ = s.getAnomalies(selectedClientID, 1000.0, duration, 100)
+
+			clientHistory, errHistory := s.getFilteredClientHistory(filterOptions)
+			if errHistory != nil {
+				log.Printf("Error getting filtered client history for client %s: %v", selectedClientID, errHistory)
+				// Not returning here, just logging the error. clientHistory might be partially filled or nil.
+			}
+			clientAnomalies, errAnomalies := s.getAnomalies(selectedClientID, 1000.0, duration, 100)
+			if errAnomalies != nil {
+				log.Printf("Error getting anomalies for client %s: %v", selectedClientID, errAnomalies)
+				// Not returning here, just logging the error. clientAnomalies might be partially filled or nil.
+			}
 		}
 	}
 
@@ -294,7 +302,7 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Set headers appropriés
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	
+
 	if err := tmpl.Execute(w, pageData); err != nil {
 		// Vérifier si l'erreur est due à une connexion fermée
 		if strings.Contains(err.Error(), "wsasend") || strings.Contains(err.Error(), "broken pipe") {
@@ -303,5 +311,30 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Erreur lors de l'exécution du template: %v", err)
 		}
 		return
+	}
+}
+
+// HandleGetClients fetches all clients from the database and returns them as JSON.
+func (s *Server) HandleGetClients(w http.ResponseWriter, r *http.Request) {
+	clients, err := s.getClients(r.Context()) // Assuming getClients might need context
+	if err != nil {
+		log.Printf("Erreur récupération des clients depuis la base de données: %v", err)
+		http.Error(w, "Erreur interne du serveur lors de la récupération des clients", http.StatusInternalServerError)
+		return
+	}
+
+	jsonData, err := json.Marshal(clients)
+	if err != nil {
+		log.Printf("Erreur lors du marshaling JSON des clients: %v", err)
+		http.Error(w, "Erreur interne du serveur lors de la préparation de la réponse", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(jsonData)
+	if err != nil {
+		log.Printf("Erreur lors de l'écriture de la réponse JSON des clients: %v", err)
+		// It's often too late to send an HTTP error if headers have been written
 	}
 }

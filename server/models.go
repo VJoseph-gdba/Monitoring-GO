@@ -91,3 +91,10 @@ type HistoryFilterOptions struct {
 	MinLatency    float64
 	MaxLatency    float64
 }
+
+// Client defines the basic structure for a client.
+type Client struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	TargetURL string `json:"target_url"`
+}

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"network-monitor/server" // Remplacez par le nom de votre module
+	"monitoring-go/server" // Remplacez par le nom de votre module
 )
 
 func main() {
