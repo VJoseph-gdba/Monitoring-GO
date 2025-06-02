@@ -248,64 +248,11 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		CurrentMaxLatency:   maxLatency,
 	}
 
-	tmpl := template.Must(
-		template.New("dashboard.html").
-			Funcs(template.FuncMap{
-				"add": func(a ...float64) float64 {
-					sum := 0.0
-					for _, val := range a {
-						sum += val
-					}
-					return sum
-				},
-				"div": func(a, b float64) float64 {
-					if b == 0 {
-						return 0
-					}
-					return a / b
-				},
-				"sub": func(a, b float64) float64 { return a - b },
-				"mul": func(a, b float64) float64 { return a * b },
-				"max": func(a, b float64) float64 {
-					if a > b {
-						return a
-					}
-					return b
-				},
-				"timeFormat": func(t time.Time) string {
-					return t.Format("02/01 15:04:05")
-				},
-				"formatTime": func(t time.Time) string {
-					return t.Format("02/01/2006 15:04:05")
-				},
-				"formatDuration": func(d time.Duration) string {
-					return d.Round(time.Second).String()
-				},
-				"eq": func(a, b interface{}) bool {
-					return a == b
-				},
-				"ne": func(a, b interface{}) bool {
-					return a != b
-				},
-				"trimSuffix": func(s, suffix string) string {
-					return strings.TrimSuffix(s, suffix)
-				},
-				"parseTime": func(s string) time.Time {
-					t, err := time.Parse(time.RFC3339, s)
-					if err != nil {
-						log.Printf("Erreur de parsing de la chaîne de temps '%s': %v", s, err)
-						return time.Time{}
-					}
-					return t
-				},
-			}).
-			ParseFiles("templates/dashboard.html"))
-
 	// Set headers appropriés
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
-	if err := tmpl.Execute(w, pageData); err != nil {
+	if err := s.dashboardTmpl.Execute(w, pageData); err != nil {
 		// Vérifier si l'erreur est due à une connexion fermée
 		if strings.Contains(err.Error(), "wsasend") || strings.Contains(err.Error(), "broken pipe") {
 			log.Printf("Connexion fermée par le client pendant rendu: %v", err)
