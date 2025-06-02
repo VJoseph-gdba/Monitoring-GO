@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -191,12 +190,15 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 				MaxLatency:   maxLatency,
 			}
 
-			clientHistory, errHistory := s.getFilteredClientHistory(filterOptions)
+			var errHistory error
+			clientHistory, errHistory = s.getFilteredClientHistory(filterOptions)
 			if errHistory != nil {
 				log.Printf("Error getting filtered client history for client %s: %v", selectedClientID, errHistory)
 				// Not returning here, just logging the error. clientHistory might be partially filled or nil.
 			}
-			clientAnomalies, errAnomalies := s.getAnomalies(selectedClientID, 1000.0, duration, 100)
+
+			var errAnomalies error
+			clientAnomalies, errAnomalies = s.getAnomalies(selectedClientID, 1000.0, duration, 100)
 			if errAnomalies != nil {
 				log.Printf("Error getting anomalies for client %s: %v", selectedClientID, errAnomalies)
 				// Not returning here, just logging the error. clientAnomalies might be partially filled or nil.
@@ -311,6 +313,26 @@ func (s *Server) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Erreur lors de l'exécution du template: %v", err)
 		}
 		return
+	}
+}
+
+// HandleAPIDashboardData provides a JSON API for dashboard data.
+// TODO: Implement actual data fetching and filtering logic.
+func (s *Server) HandleAPIDashboardData(w http.ResponseWriter, r *http.Request) {
+	log.Printf("HandleAPIDashboardData called for path: %s", r.URL.Path)
+
+	// Example: Return a simple JSON response
+	// In a real application, you would fetch data similar to HandleDashboard,
+	// but format it as JSON.
+	data := map[string]interface{}{
+		"message": "API endpoint for dashboard data is under construction.",
+		"data":    nil, // Placeholder for actual data
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("Error encoding JSON response for HandleAPIDashboardData: %v", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
 
